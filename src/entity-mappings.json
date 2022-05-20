@@ -1,0 +1,46 @@
+{
+  "EntityMappings": [
+    {
+      "EntityType": "AZURE_STORAGE_ACCOUNT",
+      "ServiceName": "Storage",
+      "ResourceType": "microsoft.storage/storageaccounts",
+      "isGenericType": false,
+      "selectorType": "resource-name"
+    },
+    {
+      "EntityType": "AZURE_VM",
+      "ServiceName": "Virtual Machines",
+      "ResourceType": "microsoft.compute/virtualmachines",
+      "isGenericType": false,
+      "selectorType": "resource-id"
+    },
+    {
+      "EntityType": "AZURE_VM_SCALE_SET",
+      "ServiceName": "Virtual Machine Scale Sets",
+      "ResourceType": "microsoft.compute/virtualmachinescalesets",
+      "isGenericType": false,
+      "selectorType": "resource-name"
+    },
+    {
+      "EntityType": "AZURE_WEB_APP",
+      "ServiceName": "Web Apps",
+      "ResourceType": "microsoft.web/sites",
+      "isGenericType": false,
+      "selectorType": "resource-name"
+    },
+    {
+      "EntityType": "CUSTOM_DEVICE",
+      "ServiceName": "App Service",
+      "ResourceType": "microsoft.web/serverfarms",
+      "isGenericType": true,
+      "selectorType": "resource-id"
+    },
+    {
+      "EntityType": "CUSTOM_DEVICE",
+      "ServiceName": "Azure Kubernetes Service (AKS)",
+      "ResourceType": "microsoft.containerservice/managedclusters",
+      "isGenericType": true,
+      "selectorType": "resource-id"
+    }
+  ]
+}

@@ -17,7 +17,7 @@
     {
       "EntityType": "AZURE_VM_SCALE_SET",
       "ServiceName": "Virtual Machine Scale Sets",
-      "ResourceType": "microsoft.compute/virtualmachinescalesets",
+      "ResourceType": "microsoft.compute/virtualmachinescalesets/virtualmachines",
       "isGenericType": false,
       "selectorType": "resource-name"
     },

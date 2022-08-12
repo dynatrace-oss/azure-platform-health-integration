@@ -69,8 +69,8 @@ dispute. If you are unable to resolve the matter for any reason, or if the
 behavior is threatening or harassing, report it. We are dedicated to providing
 an environment where participants feel welcome and safe.
 
-Reports should be directed to *[PROJECT STEWARD NAME(s) AND EMAIL(s)]*, the
-Project Steward(s) for *[PROJECT NAME]*. It is the Project Steward’s duty to
+Reports should be directed to *Gareth Emslie (gareth.emslie@dynatrace.com)*, the
+Project Steward(s) for *azure-platform-health-integration*. It is the Project Steward’s duty to
 receive and address reported violations of the code of conduct. They will then
 work with the Open Source Programs Office team. If for any reason you
 are uncomfortable reaching out to the Project Steward, please email

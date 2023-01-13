@@ -34,10 +34,11 @@ resource dynatraceConnection 'Microsoft.Web/connections@2016-06-01' = {
   properties: {
     displayName: dynatraceConectionName
     parameterValues: {
-
+      api_key: dynatraceAccessToken
+      tenantUrl: dynatraceEnvironmentUrl
     }
     nonSecretParameterValues: {
-      tenantUrl: dynatraceEnvironmentUrl
+      
     }
     api: {
       id: subscriptionResourceId('Microsoft.Web/locations/managedApis', location,'dynatrace')

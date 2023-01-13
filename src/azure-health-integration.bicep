@@ -25,6 +25,25 @@ param dynatraceEnvironmentUrl string
 
 // Load entity mappings from external file - https://docs.microsoft.com/en-us/azure/service-health/resource-health-checks-resource-types
 var entityMappings = json(loadTextContent('entity-mappings.json'))
+var dynatraceConectionName = 'dynatrace'
+
+resource dynatraceConnection 'Microsoft.Web/connections@2016-06-01' = {
+  name: dynatraceConectionName
+  location: location
+  kind: 'V1'
+  properties: {
+    displayName: dynatraceConectionName
+    parameterValues: {
+
+    }
+    nonSecretParameterValues: {
+      tenantUrl: dynatraceEnvironmentUrl
+    }
+    api: {
+      id: subscriptionResourceId('Microsoft.Web/locations/managedApis', location,'dynatrace')
+    }
+  }
+}
 
 // Azure ServiceHealth Logic App
 resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
@@ -36,13 +55,9 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
       '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#'
       contentVersion: '1.0.0.0'
       parameters: {
-        ApiToken: {
-          defaultValue: ''
-          type: 'SecureString'
-        }
-        EnvironmentUrl: {
-          defaultValue: ''
-          type: 'String'
+        '$connections': {
+          defaultValue: {}
+          type: 'Object'
         }
       }
       triggers: {
@@ -145,7 +160,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                       type: 'object'
                     }
                     properties: {
-                      properties: {}
+                      properties: {
+                      }
                       type: 'object'
                     }
                     status: {
@@ -172,6 +188,20 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         }
       }
       actions: {
+        Compose_Properties: {
+          runAfter: {
+            Set_Subscription_Entity_Selector: [
+              'Succeeded'
+            ]
+          }
+          type: 'Compose'
+          inputs: {
+            impactStartTime: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'impactStartTime\']'
+            incidentType: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'incidentType\']'
+            region: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'region\']'
+            service: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'service\']'
+          }
+        }
         Compose_Resource_Mapping_JSON: {
           runAfter: {
             Parse_Impacted_Services: [
@@ -183,13 +213,13 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         }
         Filter_failed_subscription_events: {
           runAfter: {
-            Parse_Ingest_Subscription_Health_Alert_Response: [
+            Ingest_Subscription_Health_Alert: [
               'Succeeded'
             ]
           }
           type: 'Query'
           inputs: {
-            from: '@body(\'Parse_Ingest_Subscription_Health_Alert_Response\')?[\'eventIngestResults\']'
+            from: '@body(\'Ingest_Subscription_Health_Alert\')?[\'eventIngestResults\']'
             where: '@not(equals(item()?[\'status\'], \'OK\'))'
           }
         }
@@ -203,20 +233,21 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                   actions: {
                     Filter_failed_service_events: {
                       runAfter: {
-                        Parse_Ingest_Service_Health_Alert_Response: [
+                        Ingest_Service_Health_Alert: [
                           'Succeeded'
                         ]
                       }
                       type: 'Query'
                       inputs: {
-                        from: '@body(\'Parse_Ingest_Service_Health_Alert_Response\')?[\'eventIngestResults\']'
+                        from: '@body(\'Ingest_Service_Health_Alert\')?[\'eventIngestResults\']'
                         where: '@not(equals(item()?[\'status\'], \'OK\'))'
                       }
                     }
-                    Has_Ingest_Service_Health_Alert_Succeeded: {
+                    Has_Ingest_Service_Health_Alert_Failed: {
                       actions: {
                         Set_Ingest_Service_Health_Alert_failed: {
-                          runAfter: {}
+                          runAfter: {
+                          }
                           type: 'SetVariable'
                           inputs: {
                             name: 'succeeded'
@@ -237,12 +268,6 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                               0
                             ]
                           }
-                          {
-                            equals: [
-                              '@length(body(\'Parse_Ingest_Service_Health_Alert_Response\')?[\'eventIngestResults\'])'
-                              0
-                            ]
-                          }
                         ]
                       }
                       type: 'If'
@@ -253,62 +278,32 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                           'Succeeded'
                         ]
                       }
-                      type: 'Http'
+                      type: 'ApiConnection'
                       inputs: {
                         body: {
-                          entitySelector: '@{variables(\'entitySelector\')}'
-                          eventType: '@{variables(\'eventType\')}'
+                          entitySelector: '@variables(\'entitySelector\')'
+                          eventType: '@variables(\'eventType\')'
                           properties: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']'
-                          startTime: '@variables(\'startTimeInMs\')'
+                          startTime: '@{variables(\'startTimeInMs\')}'
                           timeout: 1440
-                          title: '@{triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'title\']}'
+                          title: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'title\']'
                         }
                         headers: {
-                          Authorization: 'Api-Token @{parameters(\'ApiToken\')}'
+                          'Content-Type': 'application/json;charset=utf-8'
                         }
-                        method: 'POST'
+                        host: {
+                          connection: {
+                            name: '@parameters(\'$connections\')[\'dynatrace\'][\'connectionId\']'
+                          }
+                        }
+                        method: 'post'
+                        path: '/api/v2/events/ingest'
                         uri: '@{parameters(\'EnvironmentUrl\')}/api/v2/events/ingest'
                       }
                     }
-                    Parse_Ingest_Service_Health_Alert_Response: {
-                      runAfter: {
-                        Ingest_Service_Health_Alert: [
-                          'Succeeded'
-                        ]
-                      }
-                      type: 'ParseJson'
-                      inputs: {
-                        content: '@body(\'Ingest_Service_Health_Alert\')'
-                        schema: {
-                          properties: {
-                            eventIngestResults: {
-                              items: {
-                                properties: {
-                                  correlationId: {
-                                    type: 'string'
-                                  }
-                                  status: {
-                                    type: 'string'
-                                  }
-                                }
-                                required: [
-                                  'status'
-                                  'correlationId'
-                                ]
-                                type: 'object'
-                              }
-                              type: 'array'
-                            }
-                            reportCount: {
-                              type: 'integer'
-                            }
-                          }
-                          type: 'object'
-                        }
-                      }
-                    }
                     Set_Service_Entity_Selector: {
-                      runAfter: {}
+                      runAfter: {
+                      }
                       type: 'SetVariable'
                       inputs: {
                         name: 'entitySelector'
@@ -316,7 +311,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                       }
                     }
                   }
-                  runAfter: {}
+                  runAfter: {
+                  }
                   type: 'Foreach'
                 }
               }
@@ -338,7 +334,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               type: 'If'
             }
             Map_Resource_to_Entity: {
-              runAfter: {}
+              runAfter: {
+              }
               type: 'Query'
               inputs: {
                 from: '@body(\'Parse_Resource_Mapping_Array\')?[\'EntityMappings\']'
@@ -353,10 +350,11 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           }
           type: 'Foreach'
         }
-        Has_Ingest_Subscription_Health_Alert_Succeeded: {
+        Has_Ingest_Subscription_Health_Alert_Failed: {
           actions: {
             Set_Ingest_Subscription_Health_Alert_failed: {
-              runAfter: {}
+              runAfter: {
+              }
               type: 'SetVariable'
               inputs: {
                 name: 'succeeded'
@@ -377,12 +375,6 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                   0
                 ]
               }
-              {
-                equals: [
-                  '@length(body(\'Parse_Ingest_Subscription_Health_Alert_Response\')?[\'eventIngestResults\'])'
-                  0
-                ]
-              }
             ]
           }
           type: 'If'
@@ -390,7 +382,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         Have_one_or_more_ingested_events_failed: {
           actions: {
             One_or_more_events_were_not_successfully_ingested: {
-              runAfter: {}
+              runAfter: {
+              }
               type: 'Terminate'
               inputs: {
                 runStatus: 'Failed'
@@ -418,25 +411,30 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         }
         Ingest_Subscription_Health_Alert: {
           runAfter: {
-            Set_Subscription_Entity_Selector: [
+            Compose_Properties: [
               'Succeeded'
             ]
           }
-          type: 'Http'
+          type: 'ApiConnection'
           inputs: {
             body: {
-              entitySelector: '@{variables(\'entitySelector\')}'
-              eventType: '@{variables(\'eventType\')}'
-              properties: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']'
-              startTime: '@variables(\'startTimeInMs\')'
+              entitySelector: '@variables(\'entitySelector\')'
+              eventType: '@variables(\'eventType\')'
+              properties: '@outputs(\'Compose_Properties\')'
+              startTime: '@{variables(\'startTimeInMs\')}'
               timeout: 1440
-              title: '@{triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'title\']}'
+              title: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'title\']'
             }
             headers: {
-              Authorization: 'Api-Token @{parameters(\'ApiToken\')}'
+              'Content-Type': 'application/json;charset=utf-8'
             }
-            method: 'POST'
-            uri: '@{parameters(\'EnvironmentUrl\')}/api/v2/events/ingest'
+            host: {
+              connection: {
+                name: '@parameters(\'$connections\')[\'dynatrace\'][\'connectionId\']'
+              }
+            }
+            method: 'post'
+            path: '/api/v2/events/ingest'
           }
         }
         Initialize_Succeeded: {
@@ -489,7 +487,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           }
         }
         Initialize_startTimeInMs: {
-          runAfter: {}
+          runAfter: {
+          }
           type: 'InitializeVariable'
           inputs: {
             variables: [
@@ -503,7 +502,7 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         }
         Parse_Impacted_Services: {
           runAfter: {
-            Has_Ingest_Subscription_Health_Alert_Succeeded: [
+            Has_Ingest_Subscription_Health_Alert_Failed: [
               'Succeeded'
             ]
           }
@@ -538,43 +537,6 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 type: 'object'
               }
               type: 'array'
-            }
-          }
-        }
-        Parse_Ingest_Subscription_Health_Alert_Response: {
-          runAfter: {
-            Ingest_Subscription_Health_Alert: [
-              'Succeeded'
-            ]
-          }
-          type: 'ParseJson'
-          inputs: {
-            content: '@body(\'Ingest_Subscription_Health_Alert\')'
-            schema: {
-              properties: {
-                eventIngestResults: {
-                  items: {
-                    properties: {
-                      correlationId: {
-                        type: 'string'
-                      }
-                      status: {
-                        type: 'string'
-                      }
-                    }
-                    required: [
-                      'status'
-                      'correlationId'
-                    ]
-                    type: 'object'
-                  }
-                  type: 'array'
-                }
-                reportCount: {
-                  type: 'integer'
-                }
-              }
-              type: 'object'
             }
           }
         }
@@ -647,7 +609,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               case: 'ActionRequired'
               actions: {
                 Set_Action_Required_Type: {
-                  runAfter: {}
+                  runAfter: {
+                  }
                   type: 'SetVariable'
                   inputs: {
                     name: 'eventType'
@@ -660,7 +623,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               case: 'Incident'
               actions: {
                 Set_Incident_Type: {
-                  runAfter: {}
+                  runAfter: {
+                  }
                   type: 'SetVariable'
                   inputs: {
                     name: 'eventType'
@@ -673,7 +637,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               case: 'Informational'
               actions: {
                 Set_Informational_Type: {
-                  runAfter: {}
+                  runAfter: {
+                  }
                   type: 'SetVariable'
                   inputs: {
                     name: 'eventType'
@@ -686,7 +651,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               case: 'Maintenance'
               actions: {
                 Set_Maintenance_Type: {
-                  runAfter: {}
+                  runAfter: {
+                  }
                   type: 'SetVariable'
                   inputs: {
                     name: 'eventType'
@@ -699,7 +665,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               case: 'Security'
               actions: {
                 Set_Security_Type: {
-                  runAfter: {}
+                  runAfter: {
+                  }
                   type: 'SetVariable'
                   inputs: {
                     name: 'eventType'
@@ -712,7 +679,8 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           default: {
             actions: {
               Set_Default_Type: {
-                runAfter: {}
+                runAfter: {
+                }
                 type: 'SetVariable'
                 inputs: {
                   name: 'eventType'
@@ -725,14 +693,18 @@ resource serviceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           type: 'Switch'
         }
       }
-      outputs: {}
+      outputs: {
+      }
     }
     parameters: {
-      ApiToken: {
-          value: dynatraceAccessToken
-      }
-      EnvironmentUrl: {
-          value: dynatraceEnvironmentUrl
+      '$connections': {
+        value: {
+          dynatrace: {
+            connectionId: dynatraceConnection.id
+            connectionName: dynatraceConnection.name
+            id: subscriptionResourceId('Microsoft.Web/locations/managedApis', location,'dynatrace')
+          }
+        }
       }
     }
   }
@@ -812,13 +784,9 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
       '$schema': 'https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#'
       contentVersion: '1.0.0.0'
       parameters: {
-        ApiToken: {
-          defaultValue: ''
-          type: 'SecureString'
-        }
-        EnvironmentUrl: {
-          defaultValue: ''
-          type: 'String'
+        '$connections': {
+          defaultValue: {}
+          type: 'Object'
         }
       }
       triggers: {
@@ -944,20 +912,145 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           type: 'Compose'
           inputs: entityMappings
         }
-        Condition_Exists_Mapped_Entity: {
+        Have_one_or_more_ingested_events_failed: {
           actions: {
-            Condition_Entity_Type_Set: {
+            One_or_more_events_were_not_successfully_ingested: {
+              runAfter: {
+              }
+              type: 'Terminate'
+              inputs: {
+                runStatus: 'Failed'
+              }
+            }
+          }
+          runAfter: {
+            If_Exists_Mapped_Entity: [
+              'Succeeded'
+            ]
+          }
+          expression: {
+            and: [
+              {
+                not: {
+                  equals: [
+                    '@variables(\'succeeded\')'
+                    true
+                  ]
+                }
+              }
+            ]
+          }
+          type: 'If'
+        }
+        If_Exists_Mapped_Entity: {
+          actions: {
+            Get_Mapped_EntityType: {
+              runAfter: {
+              }
+              type: 'Compose'
+              inputs: '@first(body(\'Map_Resource_to_Entity\'))[\'entityType\']'
+            }
+            Get_Mapped_Is_Generic_Type: {
+              runAfter: {
+                Set_Selector_Type: [
+                  'Succeeded'
+                ]
+              }
+              type: 'Compose'
+              inputs: '@first(body(\'Map_Resource_to_Entity\'))[\'isGenericType\']'
+            }
+            Get_Mapped_SelectorType: {
+              runAfter: {
+                Set_Entity_Type: [
+                  'Succeeded'
+                ]
+              }
+              type: 'Compose'
+              inputs: '@first(body(\'Map_Resource_to_Entity\'))[\'selectorType\']'
+            }
+            Is_Entity_Type_and_Selector_Type_Set: {
               actions: {
-                Condition: {
+                Filter_failed_resource_events: {
+                  runAfter: {
+                    Ingest_Resource_Health_Alert: [
+                      'Succeeded'
+                    ]
+                  }
+                  type: 'Query'
+                  inputs: {
+                    from: '@body(\'Ingest_Resource_Health_Alert\')?[\'eventIngestResults\']'
+                    where: '@not(equals(item()?[\'status\'], \'OK\'))'
+                  }
+                }
+                Has_Ingest_Resource_Health_Alert_Succeeded: {
+                  actions: {
+                    Set_Ingest_Resource_Health_Alert_failed: {
+                      runAfter: {
+                      }
+                      type: 'SetVariable'
+                      inputs: {
+                        name: 'succeeded'
+                        value: false
+                      }
+                    }
+                  }
+                  runAfter: {
+                    Filter_failed_resource_events: [
+                      'Succeeded'
+                    ]
+                  }
+                  expression: {
+                    or: [
+                      {
+                        greater: [
+                          '@length(body(\'Filter_failed_resource_events\'))'
+                          0
+                        ]
+                      }
+                    ]
+                  }
+                  type: 'If'
+                }
+                Ingest_Resource_Health_Alert: {
+                  runAfter: {
+                    Switch_Event_Type: [
+                      'Succeeded'
+                    ]
+                  }
+                  type: 'ApiConnection'
+                  inputs: {
+                    body: {
+                      entitySelector: '@variables(\'entitySelector\')'
+                      eventType: '@variables(\'eventType\')'
+                      properties: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']'
+                      startTime: '@{variables(\'startTimeInMs\')}'
+                      timeout: 1440
+                      title: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'title\']'
+                    }
+                    headers: {
+                      'Content-Type': 'application/json;charset=utf-8'
+                    }
+                    host: {
+                      connection: {
+                        name: '@parameters(\'$connections\')[\'dynatrace\'][\'connectionId\']'
+                      }
+                    }
+                    method: 'post'
+                    path: '/api/v2/events/ingest'
+                  }
+                }
+                Is_Generic_Entity_Type: {
                   actions: {
                     Switch_Generic_Selector_Type: {
-                      runAfter: {}
+                      runAfter: {
+                      }
                       cases: {
                         Case_Generic_Resource_Id: {
                           case: 'resource-id'
                           actions: {
                             Set_Generic_Resource_Id_Selector: {
-                              runAfter: {}
+                              runAfter: {
+                              }
                               type: 'SetVariable'
                               inputs: {
                                 name: 'entitySelector'
@@ -970,7 +1063,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                       default: {
                         actions: {
                           Terminate_Generic_Selector_Type_Not_Implemented: {
-                            runAfter: {}
+                            runAfter: {
+                            }
                             type: 'Terminate'
                             inputs: {
                               runStatus: 'Succeeded'
@@ -982,17 +1076,20 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                       type: 'Switch'
                     }
                   }
-                  runAfter: {}
+                  runAfter: {
+                  }
                   else: {
                     actions: {
                       'Switch_Non-Generic_Selector_Type': {
-                        runAfter: {}
+                        runAfter: {
+                        }
                         cases: {
                           'Case_Non-Generic_Resource_Id': {
                             case: 'resource-id'
                             actions: {
                               Set_Non_Generic_Resource_Id_Selector: {
-                                runAfter: {}
+                                runAfter: {
+                                }
                                 type: 'SetVariable'
                                 inputs: {
                                   name: 'entitySelector'
@@ -1005,7 +1102,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                             case: 'resource-name'
                             actions: {
                               Set_Non_Generic_Resource_Name_Selector: {
-                                runAfter: {}
+                                runAfter: {
+                                }
                                 type: 'SetVariable'
                                 inputs: {
                                   name: 'entitySelector'
@@ -1018,7 +1116,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                         default: {
                           actions: {
                             'Terminate_Non-Generic_Selector_Type_Not_Implemented': {
-                              runAfter: {}
+                              runAfter: {
+                              }
                               type: 'Terminate'
                               inputs: {
                                 runStatus: 'Succeeded'
@@ -1043,115 +1142,9 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                   }
                   type: 'If'
                 }
-                Filter_failed_resource_events: {
-                  runAfter: {
-                    Parse_Ingest_Resource_Health_Alert_Response: [
-                      'Succeeded'
-                    ]
-                  }
-                  type: 'Query'
-                  inputs: {
-                    from: '@body(\'Parse_Ingest_Resource_Health_Alert_Response\')?[\'eventIngestResults\']'
-                    where: '@not(equals(item()?[\'status\'], \'OK\'))'
-                  }
-                }
-                Has_Ingest_Resource_Health_Alert_Succeeded: {
-                  actions: {
-                    Set_Ingest_Resource_Health_Alert_failed: {
-                      runAfter: {}
-                      type: 'SetVariable'
-                      inputs: {
-                        name: 'succeeded'
-                        value: false
-                      }
-                    }
-                  }
-                  runAfter: {
-                    Filter_failed_resource_events: [
-                      'Succeeded'
-                    ]
-                  }
-                  expression: {
-                    or: [
-                      {
-                        greater: [
-                          '@length(body(\'Filter_failed_resource_events\'))'
-                          0
-                        ]
-                      }
-                      {
-                        equals: [
-                          '@length(body(\'Parse_Ingest_Resource_Health_Alert_Response\')?[\'eventIngestResults\'])'
-                          0
-                        ]
-                      }
-                    ]
-                  }
-                  type: 'If'
-                }
-                Ingest_Resource_Health_Alert: {
-                  runAfter: {
-                    Switch_Event_Type: [
-                      'Succeeded'
-                    ]
-                  }
-                  type: 'Http'
-                  inputs: {
-                    body: {
-                      entitySelector: '@{variables(\'entitySelector\')}'
-                      eventType: '@{variables(\'eventType\')}'
-                      properties: '@triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']'
-                      startTime: '@variables(\'startTimeInMs\')'
-                      timeout: 1440
-                      title: '@{triggerBody()?[\'data\']?[\'context\']?[\'activityLog\']?[\'properties\']?[\'title\']}'
-                    }
-                    headers: {
-                      Authorization: 'Api-Token @{parameters(\'ApiToken\')}'
-                    }
-                    method: 'POST'
-                    uri: '@{parameters(\'EnvironmentUrl\')}/api/v2/events/ingest'
-                  }
-                }
-                Parse_Ingest_Resource_Health_Alert_Response: {
-                  runAfter: {
-                    Ingest_Resource_Health_Alert: [
-                      'Succeeded'
-                    ]
-                  }
-                  type: 'ParseJson'
-                  inputs: {
-                    content: '@body(\'Ingest_Resource_Health_Alert\')'
-                    schema: {
-                      properties: {
-                        eventIngestResults: {
-                          items: {
-                            properties: {
-                              correlationId: {
-                                type: 'string'
-                              }
-                              status: {
-                                type: 'string'
-                              }
-                            }
-                            required: [
-                              'correlationId'
-                              'status'
-                            ]
-                            type: 'object'
-                          }
-                          type: 'array'
-                        }
-                        reportCount: {
-                          type: 'integer'
-                        }
-                      }
-                      type: 'object'
-                    }
-                  }
-                }
                 Switch_Event_Type: {
                   runAfter: {
-                    Condition: [
+                    Is_Generic_Entity_Type: [
                       'Succeeded'
                     ]
                   }
@@ -1160,7 +1153,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                       case: 'Available'
                       actions: {
                         Set_Available_Type: {
-                          runAfter: {}
+                          runAfter: {
+                          }
                           type: 'SetVariable'
                           inputs: {
                             name: 'eventType'
@@ -1173,7 +1167,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                       case: 'Degraded'
                       actions: {
                         Set_Degraded_Type: {
-                          runAfter: {}
+                          runAfter: {
+                          }
                           type: 'SetVariable'
                           inputs: {
                             name: 'eventType'
@@ -1186,7 +1181,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                       case: 'Unknown'
                       actions: {
                         Set_Unknown_Type: {
-                          runAfter: {}
+                          runAfter: {
+                          }
                           type: 'SetVariable'
                           inputs: {
                             name: 'eventType'
@@ -1199,7 +1195,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                   default: {
                     actions: {
                       Set_default_Type: {
-                        runAfter: {}
+                        runAfter: {
+                        }
                         type: 'SetVariable'
                         inputs: {
                           name: 'eventType'
@@ -1220,7 +1217,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
               else: {
                 actions: {
                   Terminate_Entity_or_Selector_Type_Not_Set: {
-                    runAfter: {}
+                    runAfter: {
+                    }
                     type: 'Terminate'
                     inputs: {
                       runStatus: 'Succeeded'
@@ -1249,29 +1247,6 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 ]
               }
               type: 'If'
-            }
-            Get_Mapped_EntityType: {
-              runAfter: {}
-              type: 'Compose'
-              inputs: '@first(body(\'Map_Resource_to_Entity\'))[\'entityType\']'
-            }
-            Get_Mapped_Is_Generic_Type: {
-              runAfter: {
-                Set_Selector_Type: [
-                  'Succeeded'
-                ]
-              }
-              type: 'Compose'
-              inputs: '@first(body(\'Map_Resource_to_Entity\'))[\'isGenericType\']'
-            }
-            Get_Mapped_SelectorType: {
-              runAfter: {
-                Set_Entity_Type: [
-                  'Succeeded'
-                ]
-              }
-              type: 'Compose'
-              inputs: '@first(body(\'Map_Resource_to_Entity\'))[\'selectorType\']'
             }
             Set_Entity_Type: {
               runAfter: {
@@ -1318,7 +1293,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           else: {
             actions: {
               Terminate__No_Mapped_Entity_Exists: {
-                runAfter: {}
+                runAfter: {
+                }
                 type: 'Terminate'
                 inputs: {
                   runStatus: 'Succeeded'
@@ -1333,35 +1309,6 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                   '@length(body(\'Map_Resource_to_Entity\'))'
                   0
                 ]
-              }
-            ]
-          }
-          type: 'If'
-        }
-        Have_one_or_more_ingested_events_failed: {
-          actions: {
-            One_or_more_events_were_not_successfully_ingested: {
-              runAfter: {}
-              type: 'Terminate'
-              inputs: {
-                runStatus: 'Failed'
-              }
-            }
-          }
-          runAfter: {
-            Condition_Exists_Mapped_Entity: [
-              'Succeeded'
-            ]
-          }
-          expression: {
-            and: [
-              {
-                not: {
-                  equals: [
-                    '@variables(\'succeeded\')'
-                    true
-                  ]
-                }
               }
             ]
           }
@@ -1466,7 +1413,8 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           }
         }
         Initialize_startTimeInMs: {
-          runAfter: {}
+          runAfter: {
+          }
           type: 'InitializeVariable'
           inputs: {
             variables: [
@@ -1537,14 +1485,18 @@ resource resourceHealthLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           }
         }
       }
-      outputs: {}
+      outputs: {
+      }
     }
     parameters: {
-      ApiToken: {
-          value: dynatraceAccessToken
-      }
-      EnvironmentUrl: {
-          value: dynatraceEnvironmentUrl
+      '$connections': {
+        value: {
+          dynatrace: {
+            connectionId: dynatraceConnection.id
+            connectionName: dynatraceConnection.name
+            id: subscriptionResourceId('Microsoft.Web/locations/managedApis', location,'dynatrace')
+          }
+        }
       }
     }
   }

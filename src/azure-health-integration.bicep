@@ -34,7 +34,7 @@ resource dynatraceConnection 'Microsoft.Web/connections@2016-06-01' = {
   properties: {
     displayName: dynatraceConectionName
     parameterValues: {
-      api_key: dynatraceAccessToken
+      api_key: 'Api-Token ${dynatraceAccessToken}'
       tenantUrl: dynatraceEnvironmentUrl
     }
     nonSecretParameterValues: {

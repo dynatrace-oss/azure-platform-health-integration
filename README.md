@@ -47,7 +47,7 @@ az group create --name ***resource-group-name*** --location ***region-name***
 - Deploy the Azure Logic Apps, configure Action Group and Activity Log Events.
 
 ```bash
-az deployment group create --resource-group ***resource-group-name*** --template-file ./src/azure-health-integration.bicep --parameters dynatraceAccessToken=***dynatrace-access-token***  --parameters dynatraceEnvironmentUrl=https://***dynatrace-environment-url***
+az deployment group create --resource-group ***resource-group-name*** --template-file ./src/azure-health-integration.bicep --parameters dynatraceAccessToken=***dynatrace-access-token***  --parameters dynatraceEnvironmentUrl=***dynatrace-environment-url***
 ```
 
 ### Azure Service Health Alert Forwarders

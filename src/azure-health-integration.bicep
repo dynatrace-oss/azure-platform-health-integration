@@ -30,7 +30,6 @@ var dynatraceConectionName = 'dynatrace'
 resource dynatraceConnection 'Microsoft.Web/connections@2016-06-01' = {
   name: dynatraceConectionName
   location: location
-  kind: 'V1'
   properties: {
     displayName: dynatraceConectionName
     parameterValues: {
